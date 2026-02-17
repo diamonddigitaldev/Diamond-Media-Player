@@ -163,26 +163,36 @@ html {
 .volume-container {
     position: absolute;
     right: 20px !important;
-    top: 15px !important;
+    bottom: 6px;
+    top: 12px;
     display: flex;
     flex-direction: column;
-    justify-content: end;
     align-items: center;
+    gap: 6px;
+    overflow: hidden;
 }
 
 .volume-icon {
     color: var(--bs-secondary-color);
-    margin-bottom: 10px;
+    font-size: 10px;
+    flex-shrink: 0;
 }
 
 #volumeSlider {
     -webkit-appearance: slider-vertical;
+    appearance: slider-vertical;
     width: 8px;
-    height: 100px;
+    flex: 1;
+    min-height: 0;
     accent-color: #9740fb;
+    cursor: pointer;
     outline: none;
     opacity: 0.7;
     transition: opacity .2s;
+}
+
+#volumeSlider:hover {
+    opacity: 1;
 }
 
 #currentFile {
