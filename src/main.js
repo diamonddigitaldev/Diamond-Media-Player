@@ -1,17 +1,108 @@
 const { app, BrowserWindow, ipcMain, dialog, Menu, globalShortcut, shell } = require('electron');
 const fs = require('fs');
 const path = require('path');
-const Store = require('electron-store');
+const Store = require('electron-store').default;
 const store = new Store();
 const { AUDIO_EXTENSIONS, VIDEO_EXTENSIONS, FILE_REGEX } = require('./constants');
 
+let autoUpdater = null;
+
+let mainWindow = null;
+
+function initAutoUpdater() {
+  autoUpdater = require('electron-updater').autoUpdater;
+  autoUpdater.autoDownload = false;
+  autoUpdater.autoInstallOnAppQuit = true;
+
+  setTimeout(() => {
+    autoUpdater.checkForUpdates().catch(err => {
+      console.log('Update check failed: ' + err.message);
+    });
+  }, 5000);
+
+  autoUpdater.on('update-available', (info) => {
+    const currentVersion = app.getVersion();
+    const newVersion = info.version;
+
+    dialog.showMessageBox(mainWindow, {
+      type: 'info',
+      title: 'Update Available',
+      message: 'A new version of Diamond Media Player is available!',
+      detail: `Current version: ${currentVersion}\nNew version: ${newVersion}\n\nWould you like to download and install this update?`,
+      buttons: ['Yes, Update Now', 'No, Later', 'View Changelog'],
+      defaultId: 0,
+      cancelId: 1
+    }).then(result => {
+      if (result.response === 0) {
+        autoUpdater.downloadUpdate();
+      } else if (result.response === 2) {
+        shell.openExternal(`https://github.com/WillTDA/Diamond-Media-Player/releases/tag/${newVersion}`);
+      }
+    });
+  });
+
+  autoUpdater.on('update-not-available', () => {
+    console.log('No updates available');
+  });
+
+  autoUpdater.on('download-progress', (progress) => {
+    console.log(`Download progress: ${Math.round(progress.percent)}%`);
+  });
+
+  autoUpdater.on('update-downloaded', (info) => {
+    dialog.showMessageBox(mainWindow, {
+      type: 'info',
+      title: 'Update Ready',
+      message: 'Update downloaded successfully!',
+      detail: `Version ${info.version} is ready to install. The application will restart to complete the update.`,
+      buttons: ['Install Now', 'Install on Quit'],
+      defaultId: 0,
+      cancelId: 1
+    }).then(result => {
+      if (result.response === 0) {
+        autoUpdater.quitAndInstall();
+      }
+    });
+  });
+
+  autoUpdater.on('error', (err) => {
+    console.log('Auto-updater error: ' + err.message);
+  });
+}
+
+function checkForUpdatesManually() {
+  autoUpdater.checkForUpdates().then(result => {
+    if (!result || !result.updateInfo || result.updateInfo.version === app.getVersion()) {
+      dialog.showMessageBox(mainWindow, {
+        type: 'info',
+        title: 'No Updates',
+        message: 'You\'re up to date!',
+        detail: `Diamond Media Player ${app.getVersion()} is the latest version.`,
+        buttons: ['OK', 'View Changelog']
+      }).then(result => {
+        if (result.response === 1) {
+          shell.openExternal(`https://github.com/WillTDA/Diamond-Media-Player/releases/tag/${app.getVersion()}`);
+        }
+      });
+    }
+  }).catch(err => {
+    dialog.showMessageBox(mainWindow, {
+      type: 'error',
+      title: 'Update Check Failed',
+      message: 'Could not check for updates.',
+      detail: err.message,
+      buttons: ['OK']
+    });
+  });
+}
+
 function createWindow() {
   let pendingFileToOpen = null;
-  const win = new BrowserWindow({
+  mainWindow = new BrowserWindow({
     width: 1280,
-    height: 720,
+    height: 775,
     minWidth: 1080,
-    minHeight: 720,
+    minHeight: 775,
     fullscreenable: true,
     webPreferences: {
       nodeIntegration: true,
@@ -25,9 +116,9 @@ function createWindow() {
     app.quit();
   } else {
     app.on('second-instance', (event, commandLine, workingDirectory) => {
-      if (win) {
-        if (win.isMinimized()) win.restore();
-        win.focus();
+      if (mainWindow) {
+        if (mainWindow.isMinimized()) mainWindow.restore();
+        mainWindow.focus();
       }
 
       // Extract and handle the file path if provided in command line arguments
@@ -39,8 +130,8 @@ function createWindow() {
   }
 
   function handleFileOpen(filePath) {
-    if (win && win.webContents && win.webContents.isLoadingMainFrame() === false) {
-      win.webContents.send('selected-file', filePath);
+    if (mainWindow && mainWindow.webContents && mainWindow.webContents.isLoadingMainFrame() === false) {
+      mainWindow.webContents.send('selected-file', filePath);
     } else {
       pendingFileToOpen = filePath;
     }
@@ -72,14 +163,14 @@ function createWindow() {
     });
   }
 
-  win.loadFile(path.join(__dirname, 'index.html'));
-  // win.webContents.openDevTools();
+  mainWindow.loadFile(path.join(__dirname, 'index.html'));
+  // mainWindow.webContents.openDevTools();
 
   // Send saved preferences and any pending file to renderer process
-  win.webContents.on('did-finish-load', () => {
-    win.webContents.send('load-preferences', store.store);
+  mainWindow.webContents.on('did-finish-load', () => {
+    mainWindow.webContents.send('load-preferences', store.store);
     if (pendingFileToOpen) {
-      win.webContents.send('selected-file', pendingFileToOpen);
+      mainWindow.webContents.send('selected-file', pendingFileToOpen);
       pendingFileToOpen = null;
     }
   });
@@ -115,12 +206,17 @@ function createWindow() {
           label: 'Toggle Full Screen',
           accelerator: 'F11',
           click: () => {
-            win.setFullScreen(!win.isFullScreen());
-            if (win && !win.isDestroyed()) {
-              const showMenu = win.isFullScreen();
-              win.setMenuBarVisibility(!showMenu);
+            mainWindow.setFullScreen(!mainWindow.isFullScreen());
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              const showMenu = mainWindow.isFullScreen();
+              mainWindow.setMenuBarVisibility(!showMenu);
             }
           }
+        },
+        { type: 'separator' },
+        {
+          label: 'Check for Updates',
+          click: checkForUpdatesManually
         },
         { type: 'separator' },
         {
@@ -153,7 +249,7 @@ function createWindow() {
     const preferencesWindow = new BrowserWindow({
       width: 400,
       height: 300,
-      parent: win,
+      parent: mainWindow,
       modal: true,
       resizable: false,
       minimizable: false,
@@ -181,7 +277,7 @@ function createWindow() {
     const creditsWindow = new BrowserWindow({
       width: 750,
       height: 450,
-      parent: win,
+      parent: mainWindow,
       modal: true,
       resizable: false,
       minimizable: false,
@@ -229,12 +325,26 @@ function createWindow() {
     if (preferences.eqStaysPaused !== undefined) {
       store.set('eqStaysPaused', preferences.eqStaysPaused);
     }
-    if (reload) win.webContents.send('load-preferences', store.store);
+    if (preferences.tempo !== undefined) {
+      store.set('tempo', preferences.tempo);
+    }
+    if (preferences.pitch !== undefined) {
+      store.set('pitch', preferences.pitch);
+    }
+    if (preferences.linked !== undefined) {
+      store.set('linked', preferences.linked);
+    }
+    if (preferences.loop !== undefined) {
+      store.set('loop', preferences.loop);
+    }
+    if (reload) mainWindow.webContents.send('load-preferences', store.store);
   });
 
   ipcMain.on('request-preferences', (event) => {
     event.reply('current-preferences', store.store);
   });
+
+  initAutoUpdater();
 }
 
 app.whenReady().then(createWindow);
