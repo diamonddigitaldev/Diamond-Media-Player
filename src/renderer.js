@@ -1,6 +1,11 @@
-const { ipcRenderer } = require('electron');
+const { ipcRenderer, webUtils } = require('electron');
 const path = require('path');
 const fs = require('fs');
+// soundtouchjs only ships ESM — load and convert to CJS on the fly
+const _stCode = fs.readFileSync(
+    path.resolve(__dirname, '../node_modules/soundtouchjs/dist/soundtouch.js'), 'utf-8'
+).replace(/^export .+$/m, '');
+const { SoundTouch } = new Function(_stCode + '\nreturn { SoundTouch };')();
 
 const { VIDEO_EXTENSIONS, ALL_EXTENSIONS } = require('./constants');
 const SUPPORTED_EXTS_SET = new Set(ALL_EXTENSIONS.map(ext => `.${ext}`));
@@ -17,12 +22,22 @@ const visualiser = document.getElementById('visualiser-canvas');
 const progressBar = document.getElementById('progress-bar');
 const progress = document.getElementById('progress');
 const volumeSlider = document.getElementById('volumeSlider');
+const volumeValueDisplay = document.getElementById('volumeValue');
 const volumeIcon = document.querySelector('.volume-icon');
 const currentTimeDisplay = document.getElementById('current-time');
 const remainingTimeDisplay = document.getElementById('remaining-time');
 const playPauseButton = document.getElementById('playPauseButton');
 const prevButton = document.getElementById('prevButton');
 const nextButton = document.getElementById('nextButton');
+const loopButton = document.getElementById('loopButton');
+
+// Tempo/Pitch controls
+const tempoSlider = document.getElementById('tempoSlider');
+const pitchSlider = document.getElementById('pitchSlider');
+const tempoValue = document.getElementById('tempoValue');
+const pitchValue = document.getElementById('pitchValue');
+const linkButton = document.getElementById('linkButton');
+const resetPlaybackButton = document.getElementById('resetPlaybackButton');
 
 let audioContext;
 let animationFrameId; // ID of the requestAnimationFrame loop
@@ -41,7 +56,15 @@ let visualiserFftSize = 1024;
 let volume = 100; // default volume is max
 let prefEqStaysPaused = false;
 
-// New global preference variables with default values:
+// Tempo/Pitch state
+let tempo = 100;       // 50-150%
+let pitch = 0;         // -12.0 to 12.0 semitones
+let linked = true;     // link toggle state (default: enabled)
+let soundtouch = null; // SoundTouch instance
+let pitchProcessorNode = null; // ScriptProcessorNode for pitch shifting
+let pitchBypass = true; // true when pitch == 0, processor not in chain
+let loop = false;      // loop toggle state
+
 let lastDataArray = null;
 
 ipcRenderer.on('load-preferences', async (event, preferences) => {
@@ -54,6 +77,27 @@ ipcRenderer.on('load-preferences', async (event, preferences) => {
         audioPlayer.volume = volume / 100;
         videoPlayer.volume = volume / 100;
         updateVolumeIcon(volume / 100);
+        volumeValueDisplay.textContent = volume + '%';
+    }
+    if (preferences.tempo !== undefined) {
+        tempo = parseFloat(preferences.tempo);
+        tempoSlider.value = tempo;
+        tempoValue.textContent = Math.round(tempo) + '%';
+        applyTempo();
+    }
+    if (preferences.pitch !== undefined) {
+        pitch = parseFloat(preferences.pitch);
+        pitchSlider.value = pitch;
+        pitchValue.textContent = pitch.toFixed(1);
+        applyPitch();
+    }
+    if (preferences.linked !== undefined) {
+        linked = preferences.linked;
+        updateLinkButton();
+    }
+    if (preferences.loop !== undefined) {
+        loop = preferences.loop;
+        updateLoopButton();
     }
     setupVisualiser();
 });
@@ -115,6 +159,7 @@ function loadMedia(filePath) {
         setupVisualiser();
     }
 
+    applyTempo();
     updateButtonStates();
     togglePlayPause();
     lufsDisplay.textContent = 'LUFS: -∞ dB | RMS: -∞ dB';
@@ -125,8 +170,11 @@ function hideAudioUI() {
     lufsDisplay.classList.add('d-none');
     document.getElementById('left-gain-canvas').classList.add('d-none');
     document.getElementById('right-gain-canvas').classList.add('d-none');
-    document.getElementById('controls').style.backgroundColor = 'rgba(20, 20, 20, 0.75)';
-    document.getElementById('app-container').style.backgroundColor = 'black !important';
+    document.getElementById('controls').style.backgroundColor = 'rgba(0, 0, 0, 0.75)';
+    document.getElementById('app-container').style.backgroundColor = 'black';
+    // Hide pitch and link (pitch shifting not available for video)
+    pitchSlider.parentElement.classList.add('d-none');
+    linkButton.classList.add('d-none');
 }
 
 function showAudioUI() {
@@ -134,8 +182,10 @@ function showAudioUI() {
     lufsDisplay.classList.remove('d-none');
     document.getElementById('left-gain-canvas').classList.remove('d-none');
     document.getElementById('right-gain-canvas').classList.remove('d-none');
-    document.getElementById('controls').style.backgroundColor = 'rgba(40, 40, 40, 0.5)';
-    document.getElementById('app-container').style.backgroundColor = 'rgb(26, 26, 26) !important';
+    document.getElementById('controls').style.backgroundColor = '';
+    document.getElementById('app-container').style.backgroundColor = '';
+    pitchSlider.parentElement.classList.remove('d-none');
+    linkButton.classList.remove('d-none');
 }
 
 function updateButtonStates() {
@@ -149,6 +199,9 @@ nextButton.addEventListener('click', playNext);
 
 function togglePlayPause() {
     const mediaPlayer = videoPlayer.classList.contains('d-none') ? audioPlayer : videoPlayer;
+    if (audioContext && audioContext.state === 'suspended') {
+        audioContext.resume();
+    }
     if (mediaPlayer.paused) {
         mediaPlayer.play();
         playPauseButton.innerHTML = '<i class="material-icons-round">pause_circle</i>';
@@ -213,6 +266,7 @@ volumeSlider.addEventListener('input', function () {
     audioPlayer.volume = volume;
     videoPlayer.volume = volume;
     updateVolumeIcon(volume);
+    volumeValueDisplay.textContent = Math.round(this.value) + '%';
 
     //save volume to preferences
     ipcRenderer.send('save-preferences', { volume: this.value }, false); // reload all preferences = false
@@ -226,9 +280,6 @@ function updateProgress() {
     progress.style.width = `${percent}%`;
     currentTimeDisplay.textContent = formatTime(mediaPlayer.currentTime);
     remainingTimeDisplay.textContent = formatTime(mediaPlayer.duration - mediaPlayer.currentTime);
-    if (mediaPlayer.currentTime === mediaPlayer.duration) {
-        playPauseButton.innerHTML = '<i class="material-icons-round">play_circle</i>';
-    }
 }
 
 function seek(e) {
@@ -257,6 +308,9 @@ function cleanupAudio() {
     if (source) {
         source.disconnect();
     }
+    if (pitchProcessorNode) {
+        pitchProcessorNode.disconnect();
+    }
     if (analyser) {
         analyser.disconnect();
     }
@@ -266,6 +320,104 @@ function cleanupAudio() {
 
     //reset peak RMS
     peakRMS = { left: -Infinity, right: -Infinity, overall: -Infinity };
+}
+
+function createPitchProcessor(context) {
+    const BUFFER_SIZE = 2048;
+    const st = new SoundTouch();
+    st.pitch = Math.pow(2, pitch / 12);
+
+    const node = context.createScriptProcessor(BUFFER_SIZE, 2, 2);
+    const interleavedInput = new Float32Array(BUFFER_SIZE * 2);
+
+    node.onaudioprocess = function (e) {
+        const inputL = e.inputBuffer.getChannelData(0);
+        const inputR = e.inputBuffer.getChannelData(1);
+        const outputL = e.outputBuffer.getChannelData(0);
+        const outputR = e.outputBuffer.getChannelData(1);
+
+        // Interleave input samples
+        for (let i = 0; i < BUFFER_SIZE; i++) {
+            interleavedInput[i * 2] = inputL[i];
+            interleavedInput[i * 2 + 1] = inputR[i];
+        }
+
+        // Feed to SoundTouch
+        st.inputBuffer.putSamples(interleavedInput, 0, BUFFER_SIZE);
+        st.process();
+
+        // Read processed output
+        const available = st.outputBuffer.frameCount;
+        if (available >= BUFFER_SIZE) {
+            const interleavedOutput = new Float32Array(BUFFER_SIZE * 2);
+            st.outputBuffer.receiveSamples(interleavedOutput, BUFFER_SIZE);
+            for (let i = 0; i < BUFFER_SIZE; i++) {
+                outputL[i] = interleavedOutput[i * 2];
+                outputR[i] = interleavedOutput[i * 2 + 1];
+            }
+        } else if (available > 0) {
+            // Partial output — read what's available, fade remainder to avoid clicks
+            const interleavedOutput = new Float32Array(available * 2);
+            st.outputBuffer.receiveSamples(interleavedOutput, available);
+            const lastL = interleavedOutput[(available - 1) * 2];
+            const lastR = interleavedOutput[(available - 1) * 2 + 1];
+            const fadeLen = BUFFER_SIZE - available;
+            for (let i = 0; i < BUFFER_SIZE; i++) {
+                if (i < available) {
+                    outputL[i] = interleavedOutput[i * 2];
+                    outputR[i] = interleavedOutput[i * 2 + 1];
+                } else {
+                    const fade = 1 - (i - available) / fadeLen;
+                    outputL[i] = lastL * fade;
+                    outputR[i] = lastR * fade;
+                }
+            }
+        } else {
+            // No output yet (initial latency) — pass through input to avoid silence click
+            outputL.set(inputL);
+            outputR.set(inputR);
+        }
+    };
+
+    return { node, soundtouch: st };
+}
+
+// Connects the audio graph, bypassing SoundTouch when pitch == 0
+function connectAudioChain() {
+    if (!audioContext || !source) return;
+
+    // Disconnect everything first
+    source.disconnect();
+    if (pitchProcessorNode) pitchProcessorNode.disconnect();
+    analyser.disconnect();
+    if (lufsNode && lufsNode.node) lufsNode.node.disconnect();
+
+    if (pitch === 0) {
+        // Bypass: source → analyser → destination
+        //         source → lufsNode → destination
+        source.connect(analyser);
+        analyser.connect(audioContext.destination);
+        source.connect(lufsNode.node);
+        lufsNode.node.connect(audioContext.destination);
+        pitchBypass = true;
+    } else {
+        // Ensure pitch processor exists
+        if (!pitchProcessorNode) {
+            const pitchProc = createPitchProcessor(audioContext);
+            pitchProcessorNode = pitchProc.node;
+            soundtouch = pitchProc.soundtouch;
+        }
+        soundtouch.pitch = Math.pow(2, pitch / 12);
+
+        // source → pitchProcessor → analyser → destination
+        //                         → lufsNode → destination
+        source.connect(pitchProcessorNode);
+        pitchProcessorNode.connect(analyser);
+        analyser.connect(audioContext.destination);
+        pitchProcessorNode.connect(lufsNode.node);
+        lufsNode.node.connect(audioContext.destination);
+        pitchBypass = false;
+    }
 }
 
 function setupVisualiser() {
@@ -279,11 +431,13 @@ function setupVisualiser() {
         source = audioContext.createMediaElementSource(audioPlayer);
     }
 
-    // Connect source to LUFS meter, analyser, and destination
-    source.connect(lufsNode.node);
-    lufsNode.node.connect(audioContext.destination);
-    source.connect(analyser);
-    analyser.connect(audioContext.destination);
+    // Create pitch processor (kept ready for when pitch != 0)
+    const pitchProc = createPitchProcessor(audioContext);
+    pitchProcessorNode = pitchProc.node;
+    soundtouch = pitchProc.soundtouch;
+
+    // Connect chain (bypasses SoundTouch when pitch == 0)
+    connectAudioChain();
 
     analyser.fftSize = visualiserFftSize;
     const bufferLength = analyser.frequencyBinCount;
@@ -523,7 +677,7 @@ document.addEventListener('drop', function (event) {
 
     const files = event.dataTransfer.files;
     if (files.length > 0) {
-        const filePath = files[0].path;
+        const filePath = webUtils.getPathForFile(files[0]);
         currentFolder = path.dirname(filePath);
         loadPlaylist(currentFolder, filePath);
         loadMedia(filePath);
@@ -596,6 +750,7 @@ document.addEventListener('keydown', function (e) {
             videoPlayer.volume = newVolUp;
             volumeSlider.value = Math.round(newVolUp * 100);
             updateVolumeIcon(newVolUp);
+            volumeValueDisplay.textContent = Math.round(newVolUp * 100) + '%';
             ipcRenderer.send('save-preferences', { volume: volumeSlider.value }, false);
             break;
         case 'ArrowDown':
@@ -606,7 +761,127 @@ document.addEventListener('keydown', function (e) {
             videoPlayer.volume = newVolDown;
             volumeSlider.value = Math.round(newVolDown * 100);
             updateVolumeIcon(newVolDown);
+            volumeValueDisplay.textContent = Math.round(newVolDown * 100) + '%';
             ipcRenderer.send('save-preferences', { volume: volumeSlider.value }, false);
             break;
     }
+});
+
+// --- Tempo/Pitch Controls ---
+
+function applyTempo() {
+    const rate = tempo / 100;
+    audioPlayer.playbackRate = rate;
+    videoPlayer.playbackRate = rate;
+    audioPlayer.preservesPitch = true;
+    videoPlayer.preservesPitch = true;
+}
+
+function applyPitch() {
+    if (soundtouch) {
+        soundtouch.pitch = Math.pow(2, pitch / 12);
+    }
+    // Reconnect chain if bypass state needs to change
+    const shouldBypass = pitch === 0;
+    if (audioContext && source && shouldBypass !== pitchBypass) {
+        connectAudioChain();
+    }
+}
+
+function updateLinkButton() {
+    const icon = linkButton.querySelector('i');
+    if (linked) {
+        icon.textContent = 'link';
+        linkButton.classList.add('linked');
+    } else {
+        icon.textContent = 'link_off';
+        linkButton.classList.remove('linked');
+    }
+}
+
+tempoSlider.addEventListener('input', function () {
+    tempo = parseFloat(this.value);
+    tempoValue.textContent = Math.round(tempo) + '%';
+    applyTempo();
+
+    if (linked) {
+        // Proportional: semitones = 12 * log2(rate)
+        pitch = 12 * Math.log2(tempo / 100);
+        pitch = Math.max(-12, Math.min(12, pitch));
+        pitchSlider.value = pitch;
+        pitchValue.textContent = pitch.toFixed(1);
+        applyPitch();
+    }
+
+    ipcRenderer.send('save-preferences', { tempo, pitch }, false);
+});
+
+pitchSlider.addEventListener('input', function () {
+    pitch = parseFloat(this.value);
+    pitchValue.textContent = pitch.toFixed(1);
+    applyPitch();
+
+    if (linked) {
+        // Proportional: rate = 2^(semitones/12)
+        tempo = 100 * Math.pow(2, pitch / 12);
+        tempo = Math.max(50, Math.min(150, tempo));
+        tempoSlider.value = tempo;
+        tempoValue.textContent = Math.round(tempo) + '%';
+        applyTempo();
+    }
+
+    ipcRenderer.send('save-preferences', { tempo, pitch }, false);
+});
+
+linkButton.addEventListener('click', function () {
+    linked = !linked;
+    updateLinkButton();
+    ipcRenderer.send('save-preferences', { linked }, false);
+});
+
+// --- Loop Control ---
+
+function updateLoopButton() {
+    if (loop) {
+        loopButton.classList.add('active');
+    } else {
+        loopButton.classList.remove('active');
+    }
+}
+
+loopButton.addEventListener('click', function () {
+    loop = !loop;
+    updateLoopButton();
+    ipcRenderer.send('save-preferences', { loop }, false);
+});
+
+function handleMediaEnded() {
+    if (loop) {
+        const mediaPlayer = videoPlayer.classList.contains('d-none') ? audioPlayer : videoPlayer;
+        mediaPlayer.currentTime = 0;
+        mediaPlayer.play();
+        playPauseButton.innerHTML = '<i class="material-icons-round">pause_circle</i>';
+    } else {
+        playPauseButton.innerHTML = '<i class="material-icons-round">play_circle</i>';
+    }
+}
+
+audioPlayer.addEventListener('ended', handleMediaEnded);
+videoPlayer.addEventListener('ended', handleMediaEnded);
+
+resetPlaybackButton.addEventListener('click', function () {
+    tempo = 100;
+    pitch = 0;
+    linked = true;
+
+    tempoSlider.value = 100;
+    pitchSlider.value = 0;
+    tempoValue.textContent = '100%';
+    pitchValue.textContent = '0.0';
+
+    applyTempo();
+    applyPitch();
+    updateLinkButton();
+
+    ipcRenderer.send('save-preferences', { tempo, pitch, linked }, false);
 });

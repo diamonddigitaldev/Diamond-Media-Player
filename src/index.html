@@ -8,9 +8,16 @@
     <link rel="stylesheet" href="../node_modules/bootstrap/dist/css/bootstrap.min.css">
     <link rel="stylesheet" href="styles.css">
     <link rel="stylesheet" href="./assets/fonts/icons/icons.css">
+    <script>
+        const theme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        document.documentElement.setAttribute('data-bs-theme', theme);
+        window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', e => {
+            document.documentElement.setAttribute('data-bs-theme', e.matches ? 'dark' : 'light');
+        });
+    </script>
 </head>
 
-<body class="bg-dark text-light">
+<body>
     <div id="app-container">
         <button id="openFile" class="btn btn-primary">Open File</button>
 
@@ -28,7 +35,27 @@
             <div id="lufs-display" class="d-none">Please select a file to play...</div>
         </div>
 
-        <div id="controls" class="d-none">
+        <div id="controls" class="d-none" data-bs-theme="dark">
+            <div class="playback-controls-container">
+                <div class="slider-group">
+                    <label for="tempoSlider">Tempo</label>
+                    <input type="range" id="tempoSlider" min="50" max="150" value="100" step="1" orient="vertical">
+                    <span id="tempoValue" class="slider-value">100%</span>
+                </div>
+                <div class="slider-group">
+                    <label for="pitchSlider">Pitch</label>
+                    <input type="range" id="pitchSlider" min="-12" max="12" value="0" step="0.1" orient="vertical">
+                    <span id="pitchValue" class="slider-value">0.0</span>
+                </div>
+                <div class="playback-controls-buttons">
+                    <button id="linkButton" class="control-button linked" title="Link tempo and pitch">
+                        <i class="material-icons-round">link</i>
+                    </button>
+                    <button id="resetPlaybackButton" class="control-button" title="Reset tempo and pitch">
+                        <i class="material-icons-round">restart_alt</i>
+                    </button>
+                </div>
+            </div>
             <div class="controls-wrapper">
                 <p id="currentFile" class="text-center">[title]</p>
                 <div class="progress-bar-container">
@@ -45,6 +72,8 @@
                             class="material-icons-round">play_circle</i></button>
                     <button id="nextButton" class="control-button" disabled><i
                             class="material-icons-round">skip_next</i></button>
+                    <button id="loopButton" class="control-button" title="Loop"><i
+                            class="material-icons-round">repeat</i></button>
                 </div>
                 <audio id="audioPlayer" class="d-none"></audio>
             </div>
@@ -53,6 +82,7 @@
                 <div class="volume-slider-container">
                     <input type="range" id="volumeSlider" min="0" max="100" value="100" orient="vertical">
                 </div>
+                <span id="volumeValue" class="slider-value">100%</span>
             </div>
         </div>
         <div id="drop-area" class="d-none">
