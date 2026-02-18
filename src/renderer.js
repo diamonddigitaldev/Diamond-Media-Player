@@ -5,7 +5,7 @@ const fs = require('fs');
 const _stCode = fs.readFileSync(
     path.resolve(__dirname, '../node_modules/soundtouchjs/dist/soundtouch.js'), 'utf-8'
 ).replace(/^export .+$/m, '');
-const { SoundTouch } = new Function(_stCode + '\nreturn { SoundTouch };')();
+// (SoundTouch is used inside the AudioWorklet, not on the main thread)
 
 const { VIDEO_EXTENSIONS, ALL_EXTENSIONS } = require('./constants');
 const SUPPORTED_EXTS_SET = new Set(ALL_EXTENSIONS.map(ext => `.${ext}`));
@@ -60,9 +60,9 @@ let prefEqStaysPaused = false;
 let tempo = 100;       // 50-150%
 let pitch = 0;         // -12.0 to 12.0 semitones
 let linked = true;     // link toggle state (default: enabled)
-let soundtouch = null; // SoundTouch instance
-let pitchProcessorNode = null; // ScriptProcessorNode for pitch shifting
-let pitchBypass = true; // true when pitch == 0, processor not in chain
+let pitchProcessorNode = null; // AudioWorkletNode for pitch+tempo shifting
+let pitchBypass = true; // true when pitch == 0, worklet not in chain
+let workletReadyPromise = null; // resolves when AudioWorklet module is loaded
 let loop = false;      // loop toggle state
 
 let lastDataArray = null;
@@ -99,7 +99,7 @@ ipcRenderer.on('load-preferences', async (event, preferences) => {
         loop = preferences.loop;
         updateLoopButton();
     }
-    setupVisualiser();
+    await setupVisualiser();
 });
 
 openFileBtn.addEventListener('click', () => {
@@ -130,10 +130,14 @@ function loadPlaylist(folder, selectedFile) {
     });
 }
 
-function loadMedia(filePath) {
+async function loadMedia(filePath) {
     if (!filePath) return;
     const ext = path.extname(filePath).toLowerCase();
     if (!SUPPORTED_EXTS_SET.has(ext)) return;
+
+    // Immediately disconnect the audio chain so the old worklet's ring buffer
+    // drains into nothing rather than into the speakers as the new file loads.
+    cleanupAudio();
 
     const isVideo = VIDEO_EXTS_SET.has(ext);
     const mediaElement = isVideo ? videoPlayer : audioPlayer;
@@ -156,7 +160,7 @@ function loadMedia(filePath) {
         audioPlayer.classList.remove('d-none');
         videoPlayer.src = '';
         showAudioUI();
-        setupVisualiser();
+        await setupVisualiser();
     }
 
     applyTempo();
@@ -310,6 +314,7 @@ function cleanupAudio() {
     }
     if (pitchProcessorNode) {
         pitchProcessorNode.disconnect();
+        pitchProcessorNode = null; // Prevent stale node from being reconnected later
     }
     if (analyser) {
         analyser.disconnect();
@@ -318,71 +323,11 @@ function cleanupAudio() {
         lufsNode.node.disconnect();
     }
 
-    //reset peak RMS
+    pitchBypass = true; // Reset so no accidental reconnection of old worklet
     peakRMS = { left: -Infinity, right: -Infinity, overall: -Infinity };
 }
 
-function createPitchProcessor(context) {
-    const BUFFER_SIZE = 2048;
-    const st = new SoundTouch();
-    st.pitch = Math.pow(2, pitch / 12);
-
-    const node = context.createScriptProcessor(BUFFER_SIZE, 2, 2);
-    const interleavedInput = new Float32Array(BUFFER_SIZE * 2);
-
-    node.onaudioprocess = function (e) {
-        const inputL = e.inputBuffer.getChannelData(0);
-        const inputR = e.inputBuffer.getChannelData(1);
-        const outputL = e.outputBuffer.getChannelData(0);
-        const outputR = e.outputBuffer.getChannelData(1);
-
-        // Interleave input samples
-        for (let i = 0; i < BUFFER_SIZE; i++) {
-            interleavedInput[i * 2] = inputL[i];
-            interleavedInput[i * 2 + 1] = inputR[i];
-        }
-
-        // Feed to SoundTouch
-        st.inputBuffer.putSamples(interleavedInput, 0, BUFFER_SIZE);
-        st.process();
-
-        // Read processed output
-        const available = st.outputBuffer.frameCount;
-        if (available >= BUFFER_SIZE) {
-            const interleavedOutput = new Float32Array(BUFFER_SIZE * 2);
-            st.outputBuffer.receiveSamples(interleavedOutput, BUFFER_SIZE);
-            for (let i = 0; i < BUFFER_SIZE; i++) {
-                outputL[i] = interleavedOutput[i * 2];
-                outputR[i] = interleavedOutput[i * 2 + 1];
-            }
-        } else if (available > 0) {
-            // Partial output — read what's available, fade remainder to avoid clicks
-            const interleavedOutput = new Float32Array(available * 2);
-            st.outputBuffer.receiveSamples(interleavedOutput, available);
-            const lastL = interleavedOutput[(available - 1) * 2];
-            const lastR = interleavedOutput[(available - 1) * 2 + 1];
-            const fadeLen = BUFFER_SIZE - available;
-            for (let i = 0; i < BUFFER_SIZE; i++) {
-                if (i < available) {
-                    outputL[i] = interleavedOutput[i * 2];
-                    outputR[i] = interleavedOutput[i * 2 + 1];
-                } else {
-                    const fade = 1 - (i - available) / fadeLen;
-                    outputL[i] = lastL * fade;
-                    outputR[i] = lastR * fade;
-                }
-            }
-        } else {
-            // No output yet (initial latency) — pass through input to avoid silence click
-            outputL.set(inputL);
-            outputR.set(inputR);
-        }
-    };
-
-    return { node, soundtouch: st };
-}
-
-// Connects the audio graph, bypassing SoundTouch when pitch == 0
+// Connects the audio graph, bypassing the worklet when at default settings
 function connectAudioChain() {
     if (!audioContext || !source) return;
 
@@ -392,7 +337,7 @@ function connectAudioChain() {
     analyser.disconnect();
     if (lufsNode && lufsNode.node) lufsNode.node.disconnect();
 
-    if (pitch === 0) {
+    if (pitch === 0 && tempo === 100 || !pitchProcessorNode) {
         // Bypass: source → analyser → destination
         //         source → lufsNode → destination
         source.connect(analyser);
@@ -401,14 +346,6 @@ function connectAudioChain() {
         lufsNode.node.connect(audioContext.destination);
         pitchBypass = true;
     } else {
-        // Ensure pitch processor exists
-        if (!pitchProcessorNode) {
-            const pitchProc = createPitchProcessor(audioContext);
-            pitchProcessorNode = pitchProc.node;
-            soundtouch = pitchProc.soundtouch;
-        }
-        soundtouch.pitch = Math.pow(2, pitch / 12);
-
         // source → pitchProcessor → analyser → destination
         //                         → lufsNode → destination
         source.connect(pitchProcessorNode);
@@ -420,7 +357,7 @@ function connectAudioChain() {
     }
 }
 
-function setupVisualiser() {
+async function setupVisualiser() {
     cleanupAudio();
 
     // Initialize audio context and nodes if not already done
@@ -429,14 +366,28 @@ function setupVisualiser() {
         analyser = audioContext.createAnalyser();
         lufsNode = createLoudnessMonitor(audioContext);
         source = audioContext.createMediaElementSource(audioPlayer);
+
+        // Load the AudioWorklet module once — SoundTouch code is prepended so it
+        // is available as a global inside the worklet's scope.
+        const workletSrc = fs.readFileSync(path.resolve(__dirname, 'pitch-worklet.js'), 'utf-8');
+        const blob = new Blob([_stCode + '\n' + workletSrc], { type: 'application/javascript' });
+        const blobUrl = URL.createObjectURL(blob);
+        workletReadyPromise = audioContext.audioWorklet.addModule(blobUrl)
+            .then(() => URL.revokeObjectURL(blobUrl));
     }
 
-    // Create pitch processor (kept ready for when pitch != 0)
-    const pitchProc = createPitchProcessor(audioContext);
-    pitchProcessorNode = pitchProc.node;
-    soundtouch = pitchProc.soundtouch;
+    await workletReadyPromise;
 
-    // Connect chain (bypasses SoundTouch when pitch == 0)
+    // Create a fresh AudioWorkletNode and sync current pitch state into it
+    if (pitchProcessorNode) pitchProcessorNode.disconnect();
+    pitchProcessorNode = new AudioWorkletNode(audioContext, 'pitch-tempo-processor', {
+        numberOfInputs: 1,
+        numberOfOutputs: 1,
+        outputChannelCount: [2]
+    });
+    pitchProcessorNode.port.postMessage({ stPitch: computeStPitch() });
+
+    // Connect chain (bypasses worklet when pitch == 0)
     connectAudioChain();
 
     analyser.fftSize = visualiserFftSize;
@@ -769,22 +720,41 @@ document.addEventListener('keydown', function (e) {
 
 // --- Tempo/Pitch Controls ---
 
+// SoundTouch pitch multiplier: undoes the pitch change from playbackRate
+// (playing at tempo/100 shifts pitch by 100/tempo) then adds user pitch offset.
+function computeStPitch() {
+    return (100 / tempo) * Math.pow(2, pitch / 12);
+}
+
 function applyTempo() {
     const rate = tempo / 100;
     audioPlayer.playbackRate = rate;
     videoPlayer.playbackRate = rate;
-    audioPlayer.preservesPitch = true;
-    videoPlayer.preservesPitch = true;
+
+    if (pitchProcessorNode && !pitchBypass) {
+        // Worklet is correcting the pitch; tell the browser not to double-process.
+        audioPlayer.preservesPitch = false;
+        videoPlayer.preservesPitch = false;
+        pitchProcessorNode.port.postMessage({ stPitch: computeStPitch() });
+    } else {
+        // Bypass: let the browser handle pitch correction natively.
+        audioPlayer.preservesPitch = true;
+        videoPlayer.preservesPitch = true;
+    }
 }
 
 function applyPitch() {
-    if (soundtouch) {
-        soundtouch.pitch = Math.pow(2, pitch / 12);
-    }
-    // Reconnect chain if bypass state needs to change
-    const shouldBypass = pitch === 0;
+    const shouldBypass = pitch === 0 && tempo === 100;
     if (audioContext && source && shouldBypass !== pitchBypass) {
         connectAudioChain();
+    }
+    if (pitchProcessorNode && !pitchBypass) {
+        audioPlayer.preservesPitch = false;
+        videoPlayer.preservesPitch = false;
+        pitchProcessorNode.port.postMessage({ stPitch: computeStPitch() });
+    } else {
+        audioPlayer.preservesPitch = true;
+        videoPlayer.preservesPitch = true;
     }
 }
 
@@ -868,6 +838,13 @@ function handleMediaEnded() {
 
 audioPlayer.addEventListener('ended', handleMediaEnded);
 videoPlayer.addEventListener('ended', handleMediaEnded);
+
+// After a seek, flush stale samples from the SoundTouch ring buffer
+audioPlayer.addEventListener('seeking', () => {
+    if (pitchProcessorNode && !pitchBypass) {
+        pitchProcessorNode.port.postMessage({ flush: true });
+    }
+});
 
 resetPlaybackButton.addEventListener('click', function () {
     tempo = 100;
