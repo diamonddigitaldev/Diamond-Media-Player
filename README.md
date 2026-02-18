@@ -9,7 +9,7 @@
 <div align="center">
 
   ![license](https://img.shields.io/badge/license-Apache%202.0-blue?style=flat-square)
-  ![version](https://img.shields.io/badge/version-1.2.0-brightgreen?style=flat-square)
+  ![version](https://img.shields.io/badge/version-1.2.1-brightgreen?style=flat-square)
   ![platform](https://img.shields.io/badge/platform-Windows-lightgrey?style=flat-square)
 
   [![discord](https://img.shields.io/discord/667479986214666272?logo=discord&logoColor=white&style=flat-square)](https://diamonddigital.dev/discord)
@@ -38,7 +38,7 @@ https://github.com/user-attachments/assets/5faa179e-6057-4f43-a198-9bf9f3418cc2
 
 - 🎨 <b>Modern UI</b> | Sleek, intuitive interface designed for a seamless user experience.
 
-- ⚙️ <b>Customisable Settings</b> | Tailor the player to your preferences with adjustable visualiser quality.
+- ⚙️ <b>Customisable Settings</b> | Tailor the player to your preferences with adjustable tempo, pitch and visualiser quality settings.
 
 ## Installation
 
