@@ -513,8 +513,30 @@ body.popup-window {
     transition: opacity .2s;
 }
 
+.slider-group .slider-value {
+    cursor: pointer;
+}
+
+.slider-group .slider-value:hover {
+    color: #9740fb;
+}
+
+.slider-value-input {
+    width: 38px;
+    font-size: 10px;
+    text-align: center;
+    background: transparent;
+    border: 1px solid #9740fb;
+    border-radius: 3px;
+    color: var(--bs-body-color);
+    outline: none;
+    padding: 0 2px;
+    flex-shrink: 0;
+}
+
 .slider-group:hover .slider-value,
-.volume-container:hover .slider-value {
+.volume-container:hover .slider-value,
+.slider-group .slider-value:has(.slider-value-input) {
     opacity: 1;
 }
 

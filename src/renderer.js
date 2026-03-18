@@ -803,6 +803,72 @@ pitchSlider.addEventListener('input', function () {
     ipcRenderer.send('save-preferences', { tempo, pitch }, false);
 });
 
+// --- Click-to-edit for tempo/pitch values ---
+
+function startValueEdit(span, currentValue, suffix, onCommit) {
+    if (span.querySelector('input')) return; // already editing
+
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'slider-value-input';
+    input.value = currentValue;
+    span.textContent = '';
+    span.appendChild(input);
+    input.focus();
+    input.select();
+
+    function commit() {
+        const raw = parseFloat(input.value);
+        if (!isNaN(raw)) onCommit(raw);
+        // onCommit restores the span text, but if parse failed restore previous
+        if (span.querySelector('input')) span.textContent = currentValue + suffix;
+    }
+
+    input.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') { e.preventDefault(); commit(); }
+        if (e.key === 'Escape') { e.preventDefault(); span.textContent = currentValue + suffix; }
+    });
+    input.addEventListener('blur', commit);
+}
+
+tempoValue.addEventListener('click', function () {
+    startValueEdit(tempoValue, Math.round(tempo), '%', function (val) {
+        tempo = Math.max(50, Math.min(150, val));
+        tempoSlider.value = tempo;
+        tempoValue.textContent = Math.round(tempo) + '%';
+        applyTempo();
+
+        if (linked) {
+            pitch = 12 * Math.log2(tempo / 100);
+            pitch = Math.max(-12, Math.min(12, pitch));
+            pitchSlider.value = pitch;
+            pitchValue.textContent = pitch.toFixed(1);
+            applyPitch();
+        }
+
+        ipcRenderer.send('save-preferences', { tempo, pitch }, false);
+    });
+});
+
+pitchValue.addEventListener('click', function () {
+    startValueEdit(pitchValue, pitch.toFixed(1), '', function (val) {
+        pitch = Math.max(-12, Math.min(12, val));
+        pitchSlider.value = pitch;
+        pitchValue.textContent = pitch.toFixed(1);
+        applyPitch();
+
+        if (linked) {
+            tempo = 100 * Math.pow(2, pitch / 12);
+            tempo = Math.max(50, Math.min(150, tempo));
+            tempoSlider.value = tempo;
+            tempoValue.textContent = Math.round(tempo) + '%';
+            applyTempo();
+        }
+
+        ipcRenderer.send('save-preferences', { tempo, pitch }, false);
+    });
+});
+
 linkButton.addEventListener('click', function () {
     linked = !linked;
     updateLinkButton();

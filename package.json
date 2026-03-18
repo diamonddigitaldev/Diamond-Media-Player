@@ -71,6 +71,7 @@
     "bootstrap": "^5.3.3",
     "electron-store": "^11.0.2",
     "electron-updater": "^6.8.3",
+    "material-icons": "^1.13.14",
     "soundtouchjs": "^0.3.0"
   }
 }
