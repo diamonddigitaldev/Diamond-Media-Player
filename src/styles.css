@@ -513,11 +513,13 @@ body.popup-window {
     transition: opacity .2s;
 }
 
-.slider-group .slider-value {
+.slider-group .slider-value,
+.volume-container .slider-value {
     cursor: pointer;
 }
 
-.slider-group .slider-value:hover {
+.slider-group .slider-value:hover,
+.volume-container .slider-value:hover {
     color: #9740fb;
 }
 
@@ -536,7 +538,8 @@ body.popup-window {
 
 .slider-group:hover .slider-value,
 .volume-container:hover .slider-value,
-.slider-group .slider-value:has(.slider-value-input) {
+.slider-group .slider-value:has(.slider-value-input),
+.volume-container .slider-value:has(.slider-value-input) {
     opacity: 1;
 }
 

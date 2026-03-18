@@ -869,6 +869,19 @@ pitchValue.addEventListener('click', function () {
     });
 });
 
+volumeValueDisplay.addEventListener('click', function () {
+    startValueEdit(volumeValueDisplay, Math.round(volumeSlider.value), '%', function (val) {
+        val = Math.max(0, Math.min(100, Math.round(val)));
+        volumeSlider.value = val;
+        const volume = val / 100;
+        audioPlayer.volume = volume;
+        videoPlayer.volume = volume;
+        updateVolumeIcon(volume);
+        volumeValueDisplay.textContent = Math.round(val) + '%';
+        ipcRenderer.send('save-preferences', { volume: val }, false);
+    });
+});
+
 linkButton.addEventListener('click', function () {
     linked = !linked;
     updateLinkButton();
