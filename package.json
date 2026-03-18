@@ -1,6 +1,6 @@
 {
   "name": "diamond-media-player",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "description": "An open-source media player for Windows built with Electron.",
   "main": "src/main.js",
   "funding": {
@@ -64,13 +64,13 @@
   "author": "Diamond Digital Development <https://diamonddigital.dev>",
   "license": "Apache-2.0",
   "devDependencies": {
-    "electron": "^40.4.1",
-    "electron-builder": "^26.7.0"
+    "electron": "^41.0.3",
+    "electron-builder": "^26.8.1"
   },
   "dependencies": {
     "bootstrap": "^5.3.3",
     "electron-store": "^11.0.2",
-    "electron-updater": "^6.3.9",
+    "electron-updater": "^6.8.3",
     "soundtouchjs": "^0.3.0"
   }
 }
