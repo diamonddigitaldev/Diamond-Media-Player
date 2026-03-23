@@ -453,6 +453,7 @@ body.popup-window {
 .popup-window span {
     color: #c796ff;
     text-decoration: none;
+    cursor: pointer;
     transition: all 0.3s;
 }
 
