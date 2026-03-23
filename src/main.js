@@ -36,7 +36,7 @@ function initAutoUpdater() {
       if (result.response === 0) {
         autoUpdater.downloadUpdate();
       } else if (result.response === 2) {
-        shell.openExternal(`https://github.com/WillTDA/Diamond-Media-Player/releases/tag/${newVersion}`);
+        shell.openExternal(`https://github.com/diamonddigitaldev/Diamond-Media-Player/releases/tag/${newVersion}`);
       }
     });
   });
@@ -81,7 +81,7 @@ function checkForUpdatesManually() {
         buttons: ['OK', 'View Changelog']
       }).then(result => {
         if (result.response === 1) {
-          shell.openExternal(`https://github.com/WillTDA/Diamond-Media-Player/releases/tag/${app.getVersion()}`);
+          shell.openExternal(`https://github.com/diamonddigitaldev/Diamond-Media-Player/releases/tag/${app.getVersion()}`);
         }
       });
     }

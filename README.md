@@ -1,5 +1,5 @@
 <div align="center">
-   <img alt="Diamond Digital Development Logo" src="./src/assets/diamondmediaplayer.png" style="width:100px;height:auto;margin-bottom:1rem;" />
+   <img alt="Diamond Media Player Logo" src="./src/assets/diamondmediaplayer.png" style="width:100px;height:auto;margin-bottom:1rem;" />
 
    # Diamond Media Player
 
@@ -9,7 +9,7 @@
 <div align="center">
 
   ![license](https://img.shields.io/badge/license-Apache%202.0-blue?style=flat-square)
-  ![version](https://img.shields.io/badge/version-1.2.2-brightgreen?style=flat-square)
+  ![version](https://img.shields.io/badge/version-1.2.3-brightgreen?style=flat-square)
   ![platform](https://img.shields.io/badge/platform-Windows-lightgrey?style=flat-square)
 
   [![discord](https://img.shields.io/discord/667479986214666272?logo=discord&logoColor=white&style=flat-square)](https://diamonddigital.dev/discord)
@@ -44,7 +44,7 @@ https://github.com/user-attachments/assets/5faa179e-6057-4f43-a198-9bf9f3418cc2
 
 To install Diamond Media Player, follow these steps:
 
-1. Download the latest release for Windows from the [releases page](https://github.com/WillTDA/Diamond-Media-Player/releases).
+1. Download the latest release for Windows from the [releases page](https://github.com/diamonddigitaldev/Diamond-Media-Player/releases).
 2. Run the installer and follow the on-screen instructions.
 3. Launch Diamond Media Player and start enjoying your media!
 
@@ -61,7 +61,7 @@ To set up the development environment:
 
 1. Clone the repository:
    ```
-   git clone https://github.com/WillTDA/Diamond-Media-Player.git
+   git clone https://github.com/diamonddigitaldev/Diamond-Media-Player.git
    ```
 
 2. Install dependencies:
@@ -98,8 +98,8 @@ Diamond Media Player is licensed under the Apache 2.0 License. See the [LICENSE]
 ## Contact Us
 
 - 🎮 Need help or want to chat? [Join our Discord Server](https://diamonddigital.dev/discord)!
-- 🐛 Found a bug? [Open an issue](https://github.com/WillTDA/Diamond-Media-Player/issues) on our GitHub repository.
-- 💡 Have a feature request? [Submit it here](https://github.com/WillTDA/Diamond-Media-Player/issues/new?labels=enhancement)!
+- 🐛 Found a bug? [Open an issue](https://github.com/diamonddigitaldev/Diamond-Media-Player/issues) on our GitHub repository.
+- 💡 Have a feature request? [Submit it here](https://github.com/diamonddigitaldev/Diamond-Media-Player/issues/new?labels=enhancement)!
 
 ---
 
