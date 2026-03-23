@@ -1,5 +1,5 @@
 <div align="center">
-   <img alt="Diamond Media Player Logo" src="./src/assets/diamondmediaplayer.png" style="width:100px;height:auto;margin-bottom:1rem;" />
+   <img alt="Diamond Media Player Logo" src="./docs/img/diamondmediaplayer.png" style="width:100px;height:auto;margin-bottom:1rem;" />
 
    # Diamond Media Player
 
